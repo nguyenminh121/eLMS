@@ -1,0 +1,19 @@
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: mssql_server
+    platform: linux/amd64
+    user: "0:0"  # Chạy với quyền root để giải quyết lỗi Access is denied
+    restart: always
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "NgMinh12012006"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql/data
+
+volumes:
+  mssql_data:
+    driver: local
