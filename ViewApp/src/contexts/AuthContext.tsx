@@ -1,98 +1,100 @@
-import { createContext, useContext, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { getMe, login as loginApi } from "../api/auth";
-
-interface User {
-    id: number;
-    email: string;
-    fullName: string;
-    roles: string[];
-}
-
-interface AuthContextType {
-    user: User | null;
-    token: string | null;
-    isAuthenticated: boolean;
-    loading: boolean;
-    login: (email: string, password: string) => Promise<void>;
-    logout: () => void;
-}
-
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+import { TOKEN_STORAGE_KEY, UNAUTHORIZED_EVENT } from "../api/axios";
+import { AuthContext } from "./auth-context";
+import type { User } from "./auth-context";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-    const [token, setToken] = useState<string | null>(
-        localStorage.getItem("token")
+    const navigate = useNavigate();
+
+    const [token, setToken] = useState<string | null>(() =>
+        localStorage.getItem(TOKEN_STORAGE_KEY)
+    );
+    const [user, setUser] = useState<User | null>(null);
+    const [loading, setLoading] = useState<boolean>(() =>
+        !!localStorage.getItem(TOKEN_STORAGE_KEY)
     );
 
-    const [user, setUser] = useState<User | null>(null);
-    const [loading, setLoading] = useState(true);
-
+    // Restore the session once on app start (e.g. after F5).
     useEffect(() => {
-        const loadUser = async () => {
-            if (!token) {
-                setLoading(false);
-                return;
-            }
+        if (!localStorage.getItem(TOKEN_STORAGE_KEY)) {
+            return;
+        }
 
-            try {
-                const response = await getMe();
-                setUser(response.data);
-            } catch {
-                localStorage.removeItem("token");
+        let cancelled = false;
+
+        getMe()
+            .then((response) => {
+                if (!cancelled) setUser(response.data);
+            })
+            .catch(() => {
+                if (cancelled) return;
+                localStorage.removeItem(TOKEN_STORAGE_KEY);
                 setToken(null);
                 setUser(null);
-            } finally {
-                setLoading(false);
-            }
+            })
+            .finally(() => {
+                if (!cancelled) setLoading(false);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    useEffect(() => {
+        const handleUnauthorized = () => {
+            setToken(null);
+            setUser(null);
         };
 
-        loadUser();
-    }, [token]);
+        window.addEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+        return () => window.removeEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+    }, []);
 
-    const login = async (email: string, password: string) => {
-        const response = await loginApi({
-            email,
-            password,
-        });
+    const login = useCallback(async (email: string, password: string) => {
+        const { data } = await loginApi({ email: email.trim(), password });
 
-        const { token: authToken } = response.data;
+        const loggedInUser: User = {
+            id: data.userId,
+            email: data.email,
+            fullName: data.fullName,
+            roles: data.roles,
+        };
 
-        localStorage.setItem("token", authToken);
-        setToken(authToken);
+        localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
+        setToken(data.token);
+        setUser(loggedInUser);
 
-        const meResponse = await getMe();
-        setUser(meResponse.data);
-    };
+        return loggedInUser;
+    }, []);
 
-    const logout = () => {
-        localStorage.removeItem("token");
+    const logout = useCallback(() => {
+        localStorage.removeItem(TOKEN_STORAGE_KEY);
         setToken(null);
         setUser(null);
-    };
+        navigate("/login", { replace: true });
+    }, [navigate]);
 
-    return (
-        <AuthContext.Provider
-            value={{
-                user,
-                token,
-                isAuthenticated: !!token,
-                loading,
-                login,
-                logout,
-            }}
-        >
-            {children}
-        </AuthContext.Provider>
+    const hasRole = useCallback(
+        (...roles: string[]) => !!user && roles.some((role) => user.roles.includes(role)),
+        [user]
     );
-}
 
-export function useAuth() {
-    const context = useContext(AuthContext);
+    const value = useMemo(
+        () => ({
+            user,
+            token,
+            isAuthenticated: !!token && !!user,
+            loading,
+            login,
+            logout,
+            hasRole,
+        }),
+        [user, token, loading, login, logout, hasRole]
+    );
 
-    if (!context) {
-        throw new Error("useAuth must be used inside AuthProvider");
-    }
-
-    return context;
+    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -236,12 +236,12 @@ public class AccountController : ControllerBase
         );
 
         if (userId == null)
-            return Unauthorized();
+            return Unauthorized(new { message = "Unauthorized" });
 
         var user = await _users.FindByIdAsync(userId);
 
         if (user == null)
-            return NotFound();
+            return NotFound(new { message = "User not found" });
 
         var roles = await _users.GetRolesAsync(user);
 

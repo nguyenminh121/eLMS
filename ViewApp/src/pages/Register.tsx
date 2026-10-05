@@ -1,6 +1,23 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import type { FormEvent } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { register as registerApi } from "../api/auth";
+import { getApiErrorMessages } from "../api/errors";
+import { isPasswordValid } from "../utils/password";
+import AuthLayout from "../components/layout/AuthLayout";
+import TextField from "../components/ui/TextField";
+import Button from "../components/ui/Button";
+import Alert from "../components/ui/Alert";
+import PasswordChecklist from "../components/PasswordChecklist";
+
+interface FieldErrors {
+    fullName?: string;
+    email?: string;
+    password?: string;
+    confirmPassword?: string;
+}
+
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Register() {
     const navigate = useNavigate();
@@ -8,179 +25,121 @@ export default function Register() {
     const [fullName, setFullName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
-    const [error, setError] = useState("");
-    const [loading, setLoading] = useState(false);
+    const [confirmPassword, setConfirmPassword] = useState("");
+    const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
+    const [errors, setErrors] = useState<string[]>([]);
+    const [submitting, setSubmitting] = useState(false);
 
-    const validatePassword = (password: string) => {
-        const errors: string[] = [];
+    const validate = () => {
+        const next: FieldErrors = {};
 
-        if (password.length < 6) {
-            errors.push("Mật khẩu phải có ít nhất 6 ký tự.");
-        }
+        if (!fullName.trim()) next.fullName = "Vui lòng nhập họ tên.";
 
-        if (!/[A-Z]/.test(password)) {
-            errors.push("Mật khẩu phải có ít nhất 1 chữ hoa.");
-        }
+        if (!email.trim()) next.email = "Vui lòng nhập email.";
+        else if (!EMAIL_PATTERN.test(email.trim())) next.email = "Email không hợp lệ.";
 
-        if (!/[0-9]/.test(password)) {
-            errors.push("Mật khẩu phải có ít nhất 1 chữ số.");
-        }
+        if (!password) next.password = "Vui lòng nhập mật khẩu.";
+        else if (!isPasswordValid(password)) next.password = "Mật khẩu chưa đáp ứng đủ yêu cầu bên dưới.";
 
-        return errors;
+        if (!confirmPassword) next.confirmPassword = "Vui lòng nhập lại mật khẩu.";
+        else if (confirmPassword !== password) next.confirmPassword = "Mật khẩu xác nhận không khớp.";
+
+        setFieldErrors(next);
+        return Object.keys(next).length === 0;
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
+        setErrors([]);
 
-        setError("");
+        if (!validate()) return;
 
-        // Validate password phía frontend
-        const passwordErrors = validatePassword(password);
-
-        if (passwordErrors.length > 0) {
-            setError(passwordErrors.join(" "));
-            return;
-        }
+        const trimmedEmail = email.trim();
 
         try {
-            setLoading(true);
+            setSubmitting(true);
 
             await registerApi({
-                fullName,
-                email,
+                fullName: fullName.trim(),
+                email: trimmedEmail,
                 password,
             });
 
-            // Register thành công
-            navigate("/login");
-        } catch (error: any) {
-            console.error("REGISTER ERROR:", error.response?.data);
-
-            const backendErrors = error.response?.data?.errors;
-
-            if (Array.isArray(backendErrors)) {
-                setError(
-                    backendErrors
-                        .map((item: any) => item.description)
-                        .join(" ")
-                );
-            } else {
-                setError(
-                    error.response?.data?.message ||
-                    "Đăng ký thất bại."
-                );
-            }
+            navigate("/login", { replace: true, state: { registeredEmail: trimmedEmail } });
+        } catch (error) {
+            setErrors(getApiErrorMessages(error, "Đăng ký thất bại. Vui lòng thử lại."));
         } finally {
-            setLoading(false);
+            setSubmitting(false);
         }
     };
 
-    const passwordLengthValid = password.length >= 6;
-    const passwordUpperValid = /[A-Z]/.test(password);
-    const passwordDigitValid = /[0-9]/.test(password);
-
     return (
-        <div>
-            <h1>Register</h1>
+        <AuthLayout
+            title="Đăng ký tài khoản"
+            subtitle="Tạo tài khoản học viên để tham gia các khóa học"
+            footer={
+                <>
+                    Đã có tài khoản?{" "}
+                    <Link to="/login" className="font-semibold text-indigo-600 hover:text-indigo-500">
+                        Đăng nhập
+                    </Link>
+                </>
+            }
+        >
+            <form onSubmit={handleSubmit} noValidate className="space-y-4">
+                <Alert messages={errors} />
 
-            {error && (
-                <p style={{ color: "red" }}>
-                    {error}
-                </p>
-            )}
+                <TextField
+                    label="Họ và tên học viên"
+                    autoComplete="name"
+                    placeholder="Nguyễn Văn A"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    error={fieldErrors.fullName}
+                    disabled={submitting}
+                    autoFocus
+                />
 
-            <form onSubmit={handleSubmit}>
-                {/* Full Name */}
-                <div>
-                    <label>Full name</label>
+                <TextField
+                    label="Địa chỉ email"
+                    type="email"
+                    autoComplete="email"
+                    placeholder="you@example.com"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    error={fieldErrors.email}
+                    disabled={submitting}
+                />
 
-                    <input
-                        type="text"
-                        value={fullName}
-                        onChange={(e) => setFullName(e.target.value)}
-                        required
-                    />
-                </div>
-
-                {/* Email */}
-                <div>
-                    <label>Email</label>
-
-                    <input
-                        type="email"
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        required
-                    />
-                </div>
-
-                {/* Password */}
-                <div>
-                    <label>Password</label>
-
-                    <input
+                <div className="space-y-2">
+                    <TextField
+                        label="Mật khẩu"
                         type="password"
+                        autoComplete="new-password"
+                        placeholder="Tối thiểu 6 ký tự..."
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        required
+                        error={fieldErrors.password}
+                        disabled={submitting}
                     />
+                    <PasswordChecklist password={password} />
                 </div>
 
-                {/* Password requirements */}
-                <div>
-                    <p>Mật khẩu phải có:</p>
+                <TextField
+                    label="Xác nhận mật khẩu"
+                    type="password"
+                    autoComplete="new-password"
+                    placeholder="Nhập lại mật khẩu vừa tạo"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    error={fieldErrors.confirmPassword}
+                    disabled={submitting}
+                />
 
-                    <ul>
-                        <li
-                            style={{
-                                color: passwordLengthValid
-                                    ? "green"
-                                    : "red",
-                            }}
-                        >
-                            {passwordLengthValid ? "✓" : "✗"} Ít nhất 6 ký tự
-                        </li>
-
-                        <li
-                            style={{
-                                color: passwordUpperValid
-                                    ? "green"
-                                    : "red",
-                            }}
-                        >
-                            {passwordUpperValid ? "✓" : "✗"} Ít nhất 1 chữ hoa
-                        </li>
-
-                        <li
-                            style={{
-                                color: passwordDigitValid
-                                    ? "green"
-                                    : "red",
-                            }}
-                        >
-                            {passwordDigitValid ? "✓" : "✗"} Ít nhất 1 chữ số
-                        </li>
-                    </ul>
-                </div>
-
-                {/* Submit */}
-                <button
-                    type="submit"
-                    disabled={loading}
-                >
-                    {loading ? "Registering..." : "Register"}
-                </button>
+                <Button type="submit" loading={submitting} className="w-full shadow-md shadow-indigo-200">
+                    {submitting ? "Đang tạo tài khoản..." : "Hoàn tất đăng ký"}
+                </Button>
             </form>
-
-            <p>
-                Đã có tài khoản?{" "}
-                <button
-                    type="button"
-                    onClick={() => navigate("/login")}
-                >
-                    Login
-                </button>
-            </p>
-        </div>
+        </AuthLayout>
     );
 }

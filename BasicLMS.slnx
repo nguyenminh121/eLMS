@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/tests/">
+    <Project Path="tests/BasicLMS.Tests/BasicLMS.Tests.csproj" />
+  </Folder>
+  <Project Path="BasicLMS.csproj" />
+</Solution>

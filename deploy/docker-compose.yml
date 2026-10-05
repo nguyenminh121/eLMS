@@ -1,0 +1,67 @@
+# Linux server stack. From the repo root:
+#   docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+#
+# SQL Server is not started here. It already runs elsewhere and is attached to
+# the external Docker network `sqlserver-network`. The API joins that network
+# and connects to ${MSSQL_HOST}.
+#
+# Network `lms`: api, web, and Nginx Proxy Manager. Only NPM publishes ports.
+# Point a proxy host at http://web:80 and enable SSL in the NPM UI (:81).
+
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__DefaultConnection: Server=${MSSQL_HOST},1433;Database=${MSSQL_DATABASE};User Id=lms_app;Password=${MSSQL_APP_PASSWORD};TrustServerCertificate=True;Connect Timeout=30;
+      Jwt__Key: ${Jwt__Key}
+      Jwt__Issuer: ${Jwt__Issuer}
+      Jwt__Audience: ${Jwt__Audience}
+      Jwt__ExpireMinutes: ${Jwt__ExpireMinutes}
+      Seed__AdminEmail: ${Seed__AdminEmail}
+      Seed__AdminPassword: ${Seed__AdminPassword}
+      Storage__Root: /app/uploads
+    volumes:
+      - api_uploads:/app/uploads
+    networks:
+      - lms
+      - sqlserver-network
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      - lms
+
+  nginx-proxy-manager:
+    image: jc21/nginx-proxy-manager:latest
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "81:81"
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - lms
+
+networks:
+  lms:
+    name: lms
+  sqlserver-network:
+    external: true
+    name: sqlserver-network
+
+volumes:
+  npm_data:
+  npm_letsencrypt:
+  api_uploads:

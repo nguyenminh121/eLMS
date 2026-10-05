@@ -69,3 +69,4 @@ Thumbs.db
 # Publish output
 publish/
 wwwroot/uploads/
+uploads/
