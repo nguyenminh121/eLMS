@@ -35,6 +35,7 @@ flowchart LR
 | --- | --- |
 | `deploy/docker-compose.yml` | Stack chính (project `basiclms`): `api`, `web`, `nginx-proxy-manager` + 2 công cụ chạy một lần `migrate`, `db-login` (profile `tools`) |
 | `deploy/docker-compose.sqlserver.yml` | Tùy chọn: SQL Server 2022 (project `basiclms-db`) cho server chưa có sẵn SQL Server |
+| `deploy/docker-compose.shared-proxy.yml` | Tùy chọn: override cho server đã có Nginx Proxy Manager riêng (xem [mục này](#server-đã-có-sẵn-nginx-proxy-manager)) |
 | `deploy/api.Dockerfile` | Stage `runtime` (API, chạy user non-root) và `migrator` (EF Core migrations bundle) |
 | `deploy/web.Dockerfile`, `deploy/nginx.conf` | Build SPA, nginx phục vụ file tĩnh và proxy `/api/` sang `api:8080` (cho phép body tới 30 MB) |
 | `deploy/sql/create-app-login.sql` | Tạo/cập nhật login `lms_app` (chỉ `db_datareader` + `db_datawriter`), idempotent |
@@ -219,6 +220,24 @@ Lưu ý:
 
 Dùng reverse proxy khác (Caddy, Traefik, nginx của host) cũng được: trỏ vào container `web:80`
 trong network `lms` và cho phép body ≥ 30 MB. Khi đó xóa service `nginx-proxy-manager`.
+
+### Server đã có sẵn Nginx Proxy Manager
+
+Nếu cổng `80`/`443`/`81` đã do một NPM khác giữ (gắn vào network ngoài, mặc định `proxy-network`,
+đổi bằng biến `PROXY_NETWORK`), thêm file override `deploy/docker-compose.shared-proxy.yml` vào
+**mọi** lệnh `docker compose`. Override này tắt NPM đi kèm và gắn `web` vào network đó với tên
+`basiclms-web`:
+
+```bash
+alias lms='docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.shared-proxy.yml'
+```
+
+Trong NPM có sẵn, tạo Proxy Host forward tới `http://basiclms-web:80` (các bước SSL và
+`client_max_body_size` như trên).
+
+Service `db-login` mặc định dùng image `mssql/server:2022-latest` (~2.4 GB) chỉ để lấy `sqlcmd`.
+Nếu server đã có image SQL Server khác, đặt `MSSQL_TOOLS_IMAGE` trong `.env` (ví dụ
+`mcr.microsoft.com/mssql/server:2025-latest`) để khỏi tải thêm.
 
 ## Cập nhật phiên bản
 

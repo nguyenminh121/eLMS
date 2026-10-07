@@ -98,7 +98,8 @@ services:
 
   db-login:
     profiles: ["tools"]
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Any mssql/server image ships sqlcmd; reuse the one the SQL Server already runs to save disk.
+    image: ${MSSQL_TOOLS_IMAGE:-mcr.microsoft.com/mssql/server:2022-latest}
     platform: linux/amd64
     entrypoint: ["/opt/mssql-tools18/bin/sqlcmd"]
     command: ["-S", "${MSSQL_HOST},1433", "-U", "sa", "-C", "-b", "-i", "/scripts/create-app-login.sql"]

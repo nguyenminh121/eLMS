@@ -1,0 +1,20 @@
+# Override for servers that already run Nginx Proxy Manager (ports 80/443/81 taken) on an external
+# Docker network. Disables the bundled NPM and attaches `web` to that network as `basiclms-web`.
+# In the existing NPM, create a proxy host forwarding to http://basiclms-web:80.
+#   docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.shared-proxy.yml up -d
+
+services:
+  nginx-proxy-manager:
+    profiles: ["bundled-proxy"]
+
+  web:
+    networks:
+      lms: {}
+      proxy-network:
+        aliases:
+          - basiclms-web
+
+networks:
+  proxy-network:
+    external: true
+    name: ${PROXY_NETWORK:-proxy-network}
