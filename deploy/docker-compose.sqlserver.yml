@@ -1,0 +1,42 @@
+# Optional: SQL Server for servers that do not already have one. Start it before the app stack:
+#   docker compose --env-file .env -f deploy/docker-compose.sqlserver.yml up -d
+# Creates network `sqlserver-network`; set MSSQL_HOST=sqlserver in .env.
+# Developer edition is not licensed for production; default is Express (10 GB per database).
+
+name: basiclms-db
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sqlserver
+    platform: linux/amd64
+    restart: unless-stopped
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?MSSQL_SA_PASSWORD is required}
+      MSSQL_PID: ${MSSQL_PID:-Express}
+    # Bound to localhost only, for sqlcmd/backup tools on the host. Remove to keep it private.
+    ports:
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    networks:
+      - sqlserver-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  sqlserver-network:
+    name: sqlserver-network
+
+volumes:
+  mssql_data:

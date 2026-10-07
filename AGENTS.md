@@ -37,6 +37,7 @@ Data/IdentitySeeder.cs            Seeds roles + default admin at startup
 Models/ApplicationUser.cs         IdentityUser<int> + FullName, DateOfBirth, AvatarUrl, IsActive, CreatedAt, UpdatedAt
 Migrations/                       EF Core migrations (source of truth for the schema)
 database/                         docker-compose for SQL Server + hand-written SQL scripts (see section 5)
+deploy/                           Production Docker (api, web, NPM, migrate/db-login tools); guide in deploy/README.md
 tests/BasicLMS.Tests/             Integration tests, grouped by feature folder
 ViewApp/                          React SPA (see ViewApp/README.md)
 wwwroot/, Models/ErrorViewModel.cs  Leftovers from the MVC template; not used by the API
@@ -59,6 +60,7 @@ Run from the repo root unless noted.
 | Apply migrations         | `dotnet ef database update --connection "<sa connection string>"`           |
 | Frontend install / dev   | `cd ViewApp && npm install && npm run dev` → http://localhost:5173          |
 | Frontend lint / build    | `cd ViewApp && npm run lint && npm run build`                               |
+| Production stack         | see `deploy/README.md` (`--profile tools run --rm migrate`, then `up -d`)   |
 
 Definition of done for any change: `dotnet test BasicLMS.slnx` passes, and for frontend changes
 `npm run lint` and `npm run build` pass in `ViewApp/`.
@@ -113,7 +115,9 @@ Agent sandbox notes:
 
 - **EF Core migrations are the source of truth.** Current schema = ASP.NET Identity tables
   (`AspNetUsers`, `AspNetRoles`, `AspNetUserRoles`, …) from `Migrations/*_InitialIdentity`.
-- `Program.cs` does **not** call `Database.Migrate()`. Apply migrations manually.
+- `Program.cs` does **not** call `Database.Migrate()`. Apply migrations manually; production uses the
+ `migrate` compose service (EF migrations bundle built from `Data/DesignTimeDbContextFactory.cs`,
+ which keeps `dotnet ef` independent of JWT/seed settings).
 - The app connects as `lms_app`, which only has `db_datareader` + `db_datawriter`
   (created by `BasicLMS.sql` when `AppPassword` is passed). Migrations need DDL rights,
   so pass an `sa` (or `db_owner`) connection string via `dotnet ef database update --connection "..."`.

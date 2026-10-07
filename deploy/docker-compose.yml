@@ -1,45 +1,74 @@
-# Linux server stack. From the repo root:
+# Production stack. Full guide: deploy/README.md. From the repo root:
 #   docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
 #
-# SQL Server is not started here. It already runs elsewhere and is attached to
-# the external Docker network `sqlserver-network`. The API joins that network
-# and connects to ${MSSQL_HOST}.
+# SQL Server is not started here. It runs elsewhere (or via deploy/docker-compose.sqlserver.yml)
+# and is attached to the external Docker network `sqlserver-network`; the API connects to ${MSSQL_HOST}.
+#
+# One-shot tools (profile `tools`, run as sa, never started by `up`):
+#   ... --profile tools run --rm migrate    apply EF Core migrations (creates the database)
+#   ... --profile tools run --rm db-login   create/update login lms_app used by the API
 #
 # Network `lms`: api, web, and Nginx Proxy Manager. Only NPM publishes ports.
 # Point a proxy host at http://web:80 and enable SSL in the NPM UI (:81).
+
+name: basiclms
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   api:
     build:
       context: ..
       dockerfile: deploy/api.Dockerfile
+      target: runtime
+    image: basiclms-api:latest
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_URLS: http://+:8080
-      ConnectionStrings__DefaultConnection: Server=${MSSQL_HOST},1433;Database=${MSSQL_DATABASE};User Id=lms_app;Password=${MSSQL_APP_PASSWORD};TrustServerCertificate=True;Connect Timeout=30;
-      Jwt__Key: ${Jwt__Key}
-      Jwt__Issuer: ${Jwt__Issuer}
-      Jwt__Audience: ${Jwt__Audience}
-      Jwt__ExpireMinutes: ${Jwt__ExpireMinutes}
-      Seed__AdminEmail: ${Seed__AdminEmail}
-      Seed__AdminPassword: ${Seed__AdminPassword}
+      ConnectionStrings__DefaultConnection: Server=${MSSQL_HOST:?MSSQL_HOST is required},1433;Database=${MSSQL_DATABASE:-BasicLMS};User Id=lms_app;Password=${MSSQL_APP_PASSWORD:?MSSQL_APP_PASSWORD is required};TrustServerCertificate=True;Connect Timeout=30;
+      Jwt__Key: ${Jwt__Key:?Jwt__Key is required}
+      Jwt__Issuer: ${Jwt__Issuer:-BasicLMS}
+      Jwt__Audience: ${Jwt__Audience:-BasicLMS.Client}
+      Jwt__ExpireMinutes: ${Jwt__ExpireMinutes:-60}
+      Seed__AdminEmail: ${Seed__AdminEmail:-admin@basiclms.local}
+      Seed__AdminPassword: ${Seed__AdminPassword:?Seed__AdminPassword is required}
       Storage__Root: /app/uploads
     volumes:
       - api_uploads:/app/uploads
     networks:
       - lms
       - sqlserver-network
+    healthcheck:
+      # The runtime image has no curl/wget; bash /dev/tcp is enough for a local HTTP probe.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /api/health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q Healthy <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *default-logging
 
   web:
     build:
       context: ..
       dockerfile: deploy/web.Dockerfile
+    image: basiclms-web:latest
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     networks:
       - lms
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *default-logging
 
   nginx-proxy-manager:
     image: jc21/nginx-proxy-manager:latest
@@ -53,6 +82,34 @@ services:
       - npm_letsencrypt:/etc/letsencrypt
     networks:
       - lms
+    logging: *default-logging
+
+  migrate:
+    profiles: ["tools"]
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+      target: migrator
+    image: basiclms-migrator:latest
+    environment:
+      ConnectionStrings__DefaultConnection: Server=${MSSQL_HOST},1433;Database=${MSSQL_DATABASE:-BasicLMS};User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=True;Connect Timeout=30;
+    networks:
+      - sqlserver-network
+
+  db-login:
+    profiles: ["tools"]
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    platform: linux/amd64
+    entrypoint: ["/opt/mssql-tools18/bin/sqlcmd"]
+    command: ["-S", "${MSSQL_HOST},1433", "-U", "sa", "-C", "-b", "-i", "/scripts/create-app-login.sql"]
+    environment:
+      SQLCMDPASSWORD: ${MSSQL_SA_PASSWORD}
+      AppPassword: ${MSSQL_APP_PASSWORD}
+      DatabaseName: ${MSSQL_DATABASE:-BasicLMS}
+    volumes:
+      - ./sql:/scripts:ro
+    networks:
+      - sqlserver-network
 
 networks:
   lms:

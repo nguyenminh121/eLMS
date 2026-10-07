@@ -8,6 +8,9 @@ Equivalent: `dotnet ef database update` against an empty database.
 
 Secrets stay in the repo-root `.env` (from `.env.example`). This script has no passwords.
 
+Production does not use this script (it drops the database). There the schema is applied by
+the `migrate` service and `lms_app` by `db-login` — see `deploy/README.md`.
+
 ## Local SQL Server
 
 ```bash

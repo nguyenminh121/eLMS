@@ -86,7 +86,7 @@ BasicLMS/
 ├── Migrations/             # EF Core migrations
 ├── Properties/             # launchSettings.json (cổng 5139 / 7154)
 ├── database/               # docker-compose SQL Server + BasicLMS.sql (schema đầy đủ)
-├── deploy/                 # Docker Compose cho server Linux (API, web, SQL, NPM)
+├── deploy/                 # Docker production: compose, Dockerfiles, nginx, script login (xem deploy/README.md)
 ├── tests/BasicLMS.Tests/   # Integration tests (xUnit)
 ├── ViewApp/                # React SPA
 ├── Program.cs              # Cấu hình DI, Identity, JWT, CORS, Swagger, seeding
@@ -176,40 +176,43 @@ Mở http://localhost:5173. Vite proxy chuyển mọi request `/api/*` tới `ht
 | `Jwt__Audience`                         | `BasicLMS.Client`            |                                                                                 |
 | `Jwt__ExpireMinutes`                    | `60`                         | Thời hạn access token (không có refresh token)                                  |
 | `Seed__AdminEmail` / `Seed__AdminPassword` | trong `.env`              | Bắt buộc khi `ASPNETCORE_ENVIRONMENT=Production`. Local để trống thì dùng `admin@basiclms.local` / `Admin@123456` |
+| `Storage__Root`                         | `uploads`                    | Thư mục file upload; Docker dùng `/app/uploads` (volume `api_uploads`)          |
+
+Biến chỉ dùng cho Docker production (`MSSQL_HOST`, `MSSQL_DATABASE`, `MSSQL_SA_PASSWORD`, `MSSQL_APP_PASSWORD`, `MSSQL_PID`): xem [`deploy/README.md`](deploy/README.md#cấu-hình-env).
 
 `appsettings.json` không chứa mật khẩu. File `.env` không được commit.
 
 ## Triển khai Linux (Docker)
 
-Trên server chỉ mở 80, 443 và 81. API và frontend nằm trên network `lms` và không publish cổng ra host. Nginx Proxy Manager nhận kết nối từ internet và cấp SSL. SQL Server không được tạo bởi stack này: container `api` tham gia network có sẵn `sqlserver-network` và kết nối tới hostname `MSSQL_HOST`.
+> Hướng dẫn đầy đủ (biến `.env`, khởi tạo DB, seed, SSL, cập nhật, sao lưu, sự cố):
+> [`deploy/README.md`](deploy/README.md).
+
+Trên server chỉ mở 80, 443 và 81. API và frontend nằm trên network `lms` và không publish cổng ra host. Nginx Proxy Manager nhận kết nối từ internet và cấp SSL. Container `api` chạy non-root, tham gia network `sqlserver-network` và kết nối tới hostname `MSSQL_HOST` bằng login `lms_app`. Chưa có SQL Server thì dùng `deploy/docker-compose.sqlserver.yml`.
 
 ```mermaid
 flowchart LR
     Internet["Internet :80 / :443"] --> NPM["Nginx Proxy Manager"]
     NPM -->|"proxy host http://web:80"| Web["web (nginx + SPA)"]
     Web -->|"/api"| API["api :8080"]
-    API -->|"sqlserver-network"| SQL[("SQL Server có sẵn")]
+    API -->|"sqlserver-network"| SQL[("SQL Server")]
 ```
 
 ```bash
-cp .env.example .env   # điền mật khẩu thật, Jwt__Key, Seed__AdminPassword
-docker compose --env-file .env -f deploy/docker-compose.yml up -d --build
+cp .env.example .env   # điền mật khẩu thật, Jwt__Key, Seed__AdminPassword, MSSQL_HOST
+# (tùy chọn) docker compose --env-file .env -f deploy/docker-compose.sqlserver.yml up -d
+docker compose --env-file .env -f deploy/docker-compose.yml --profile tools build
+docker compose --env-file .env -f deploy/docker-compose.yml --profile tools run --rm migrate    # schema
+docker compose --env-file .env -f deploy/docker-compose.yml --profile tools run --rm db-login   # login lms_app
+docker compose --env-file .env -f deploy/docker-compose.yml up -d                               # seed khi khởi động
 ```
 
-Sau khi stack lên:
-
-1. Mở `http://<ip-server>:81`. Lần đầu đăng nhập NPM bằng `admin@example.com` / `changeme`, rồi đổi ngay.
-2. Tạo Proxy Host: domain trỏ tới server, Forward Hostname `web`, Forward Port `80`, Scheme `http`. Bật Websockets không bắt buộc.
-3. Tab SSL: yêu cầu chứng chỉ Let's Encrypt. DNS của domain phải trỏ tới server trước khi xin chứng chỉ.
-
-Trình duyệt gọi cùng một origin. Nginx trong container `web` phục vụ SPA và chuyển `/api/` sang `http://api:8080`, nên không cần CORS cho domain đó.
-
-Network `sqlserver-network` phải tồn tại trước khi `docker compose up` (SQL Server đã gắn vào network đó). `MSSQL_HOST` là tên DNS của SQL Server trên network đó, thường là tên container. Schema và login `lms_app` được tạo sẵn trên SQL Server đó bằng script trong `database/`, không phải lúc khởi động API.
+Sau đó tạo Proxy Host trong NPM (`http://<ip-server>:81`) trỏ tới `web:80` và xin SSL. Trình duyệt gọi cùng một origin nên không cần CORS. `GET /api/health` trả `Healthy` khi API kết nối được database.
 
 ## API
 
 | Method | Endpoint                                 | Quyền         | Mô tả                                                          |
 | ------ | ---------------------------------------- | ------------- | -------------------------------------------------------------- |
+| GET    | `/api/health`                            | Public        | Health check (text `Healthy` / `Unhealthy`, kiểm tra kết nối DB) |
 | POST   | `/api/account/register`                  | Public        | Đăng ký `{ fullName, email, password }`, gán vai trò Student   |
 | POST   | `/api/account/login`                     | Public        | Đăng nhập `{ email, password }` → `{ token, userId, fullName, email, roles }` |
 | GET    | `/api/account/me`                        | Đã đăng nhập  | Thông tin người dùng hiện tại `{ id, email, fullName, roles }` |
@@ -265,7 +268,7 @@ Tài khoản Lecturer hiện được gán vai trò thủ công (chưa có API q
   `Lessons`, `CourseMaterials`, `CourseLecturers`, `Classes`, `ClassLecturers`, `ClassEnrollments`).
   `AspNetUsers` có thêm `FullName`, `DateOfBirth`, `AvatarUrl`, `IsActive`, `CreatedAt`, `UpdatedAt`.
   User trong quan hệ giảng viên/học viên luôn là `AspNetUsers.Id`, không dùng bảng `Users` custom.
-- API **không** tự chạy migration khi khởi động. Áp schema bằng `dotnet ef database update` hoặc script trong `database/`.
+- API **không** tự chạy migration khi khởi động. Áp schema bằng `dotnet ef database update` hoặc script trong `database/` (local), service `migrate` (production).
 - Một file schema: `database/BasicLMS.sql` (drop/recreate). Khớp cả `InitialIdentity` và `LmsDomain`.
   Chi tiết: `database/README.md`.
 
@@ -292,7 +295,7 @@ Không tạo bảng `Users`/`Roles` custom. Mọi user FK trỏ `AspNetUsers`. N
 dotnet test BasicLMS.slnx
 ```
 
-- 86 integration test trong `tests/BasicLMS.Tests/`, chia theo feature (`Account/`, `Admin/`, `Dashboard/`, `Lms/`).
+- 87 integration test trong `tests/BasicLMS.Tests/`, chia theo feature (`Account/`, `Admin/`, `Dashboard/`, `Health/`, `Lms/`).
 - `CustomWebApplicationFactory` khởi tạo API thật với SQLite in-memory và JWT key riêng, nên **không cần SQL Server** khi chạy test.
 - Frontend chưa có unit test; kiểm tra bằng `npm run lint` và `npm run build` trong `ViewApp/`.
 

@@ -1,11 +1,13 @@
 **/.git
 **/.env
 **/.vs
+**/.cursor
 **/bin
 **/obj
 **/node_modules
 **/dist
 **/TestResults
 tests
+uploads
 **/*.md
 **/*.log
