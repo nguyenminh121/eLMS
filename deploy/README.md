@@ -82,6 +82,12 @@ openssl rand -base64 24 | tr -d "/+=" | sed 's/$/aA1!/'   # mật khẩu SQL / a
 | `Jwt__ExpireMinutes` | Không | `60` | Không có refresh token; hết hạn thì đăng nhập lại |
 | `Seed__AdminEmail` | Không | `admin@basiclms.local` | Email tài khoản Admin được seed |
 | `Seed__AdminPassword` | Có | — | API từ chối khởi động ở Production nếu trống. Phải đạt policy: ≥ 6 ký tự, có chữ hoa, chữ thường, số, ký tự đặc biệt |
+| `RateLimiting__AuthPermitLimit` | Không | `100` | Số request `register`/`login` mỗi phút cho mỗi IP client. Cả lớp dùng chung Wi‑Fi = chung một IP public, nên đừng đặt quá thấp; brute-force từng tài khoản đã bị chặn bởi khóa 15 phút sau 5 lần sai |
+
+Compose đặt sẵn `ReverseProxy__ForwardLimit=2` để API lấy đúng IP client qua chuỗi
+Nginx Proxy Manager → `web` (cần cho rate limit). Nếu bỏ NPM hoặc thêm một tầng proxy (ví dụ
+Cloudflare), sửa giá trị này bằng đúng số proxy đứng trước API; đặt lớn hơn thực tế sẽ cho phép
+client giả mạo IP qua header `X-Forwarded-For`.
 
 `ConnectionStrings__DefaultConnection` và `Storage__Root` trong `.env` chỉ dùng cho `dotnet run`
 local; compose tự dựng chuỗi kết nối từ các biến `MSSQL_*` và lưu file upload ở `/app/uploads`
@@ -200,7 +206,8 @@ Lưu ý:
       AND NOT EXISTS (SELECT 1 FROM AspNetUserRoles ur WHERE ur.UserId = u.Id AND ur.RoleId = r.Id);"
   ```
 
-  Người dùng phải đăng nhập lại để JWT có vai trò mới.
+  API áp dụng vai trò mới ngay ở request kế tiếp (vai trò được đọc từ database, không từ JWT);
+  người dùng chỉ cần tải lại trang để menu cập nhật.
 
 ## Domain và SSL (Nginx Proxy Manager)
 
@@ -343,3 +350,5 @@ Log container được xoay vòng (3 file × 10 MB mỗi service). Swagger tắt
 | Upload báo lỗi `413 Request Entity Too Large` | Thêm `client_max_body_size 30m;` vào proxy host trong NPM (mục SSL bước 4) |
 | Upload báo `Permission denied` trong log API | Volume upload cũ thuộc root — xem mục [Cập nhật phiên bản](#cập-nhật-phiên-bản) |
 | `exec format error` / SQL Server rất chậm | Server ARM64; image SQL Server chỉ hỗ trợ `amd64` |
+| Mọi người dùng cùng bị `429 Too many requests` khi đăng nhập | API không thấy IP thật (tất cả chung IP của proxy) — kiểm tra `ReverseProxy__ForwardLimit` khớp số tầng proxy |
+| Một tài khoản bị `429` dù nhập đúng mật khẩu | Bị khóa 15 phút sau 5 lần sai liên tiếp; chờ hết hạn |

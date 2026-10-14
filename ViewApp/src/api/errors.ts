@@ -12,6 +12,10 @@ interface ApiErrorBody {
 
 const MESSAGE_TRANSLATIONS: Record<string, string> = {
     "Invalid email or password": "Email hoặc mật khẩu không đúng.",
+    "Too many failed login attempts. Try again later.":
+        "Bạn đã nhập sai mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.",
+    "Too many requests. Please try again later.": "Bạn thao tác quá nhanh. Vui lòng thử lại sau ít phút.",
+    "You can only look up students": "Bạn chỉ có thể tra cứu học viên.",
     "Email is already registered": "Email này đã được đăng ký.",
     "A valid email is required": "Vui lòng nhập email hợp lệ.",
     "Full name is required": "Vui lòng nhập họ tên.",
@@ -27,6 +31,7 @@ const MESSAGE_TRANSLATIONS: Record<string, string> = {
     "Course title is required": "Vui lòng nhập tên khóa học.",
     "Course category is required": "Vui lòng chọn danh mục cho khóa học.",
     "Invalid course level": "Trình độ khóa học không hợp lệ.",
+    "Thumbnail url must be an http or https address": "Ảnh bìa phải là đường dẫn http:// hoặc https://.",
     "Invalid course status": "Trạng thái khóa học không hợp lệ.",
     "You cannot create courses": "Bạn không thể tạo khóa học.",
     "Only an admin can create courses": "Chỉ quản trị viên được tạo khóa học.",
@@ -41,6 +46,8 @@ const MESSAGE_TRANSLATIONS: Record<string, string> = {
     "Duration cannot be negative": "Thời lượng không được âm.",
     "Material title is required": "Vui lòng nhập tên tài liệu.",
     "Material url is required": "Vui lòng nhập đường dẫn tài liệu.",
+    "Material url must be an http or https address": "Đường dẫn tài liệu phải bắt đầu bằng http:// hoặc https://.",
+    "Video url must be an http or https address": "Đường dẫn video phải bắt đầu bằng http:// hoặc https://.",
     "Invalid material type": "Loại tài liệu không hợp lệ.",
     "Material not found": "Không tìm thấy tài liệu.",
     "A file is required": "Vui lòng chọn tệp để tải lên.",

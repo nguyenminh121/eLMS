@@ -26,6 +26,17 @@ public static class StoredMedia
     public static string? Decode(string? value) =>
         IsStored(value) ? value![Prefix.Length..] : null;
 
+    // Keys are "<courseId>/<file>"; a file may only be served or deleted through its own course.
+    public static string? DecodeForCourse(string? value, int courseId)
+    {
+        var key = Decode(value);
+        return key != null && key.StartsWith($"{courseId}/", StringComparison.Ordinal) ? key : null;
+    }
+
+    public static bool IsHttpUrl(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+        (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
     public static bool IsAllowedExtension(string? extension) =>
         !string.IsNullOrWhiteSpace(extension) && AllowedExtensions.Contains(extension);
 

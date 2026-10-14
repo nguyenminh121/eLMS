@@ -19,6 +19,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     public const string AdminEmail = "admin@basiclms.local";
     public const string AdminPassword = "Admin@123456";
 
+    protected virtual int AuthPermitLimit => 100_000;
+
     private readonly SqliteConnection _connection;
     private readonly string _storageRoot;
 
@@ -47,6 +49,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         builder.UseSetting("Jwt:Issuer", JwtIssuer);
         builder.UseSetting("Jwt:Audience", JwtAudience);
         builder.UseSetting("Storage:Root", _storageRoot);
+        // Every test logs in from the same in-memory "IP"; tests that cover throttling lower this.
+        builder.UseSetting("RateLimiting:AuthPermitLimit", AuthPermitLimit.ToString());
 
         builder.ConfigureTestServices(services =>
         {

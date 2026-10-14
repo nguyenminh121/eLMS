@@ -254,6 +254,9 @@ public class CourseService : ICourseService
         if (!parsed.Succeeded)
             return ServiceResult<LessonResponse>.Fail(parsed.StatusCode, parsed.Message!);
 
+        if (!IsAcceptableVideoUrl(null, parsed.Value!.VideoUrl))
+            return ServiceResult<LessonResponse>.Fail(StatusCodes.Status400BadRequest, InvalidVideoUrlMessage);
+
         var maxOrder = await _db.Lessons.Where(l => l.ChapterId == chapterId).MaxAsync(l => (int?)l.SortOrder) ?? -1;
         var now = DateTime.UtcNow;
         var lesson = parsed.Value!;
@@ -284,12 +287,15 @@ public class CourseService : ICourseService
             return ServiceResult<LessonResponse>.Fail(parsed.StatusCode, parsed.Message!);
 
         var data = parsed.Value!;
+        if (!IsAcceptableVideoUrl(lesson.VideoUrl, data.VideoUrl))
+            return ServiceResult<LessonResponse>.Fail(StatusCodes.Status400BadRequest, InvalidVideoUrlMessage);
+
         lesson.Title = data.Title;
         lesson.Content = data.Content;
         lesson.DurationSeconds = data.DurationSeconds;
         if (ShouldReplaceVideo(lesson.VideoUrl, data.VideoUrl))
         {
-            DeleteStored(lesson.VideoUrl);
+            DeleteStored(lesson.VideoUrl, lesson.Chapter.CourseId);
             lesson.VideoUrl = data.VideoUrl;
         }
         if (request.SortOrder.HasValue)
@@ -315,7 +321,7 @@ public class CourseService : ICourseService
         foreach (var material in attached)
             material.LessonId = null;
 
-        DeleteStored(lesson.VideoUrl);
+        DeleteStored(lesson.VideoUrl, lesson.Chapter.CourseId);
         _db.Lessons.Remove(lesson);
         await TouchCourseAsync(lesson.Chapter.CourseId);
         await _db.SaveChangesAsync();
@@ -411,7 +417,7 @@ public class CourseService : ICourseService
         if (!access.Succeeded)
             return ServiceResult<MaterialResponse>.Fail(access.StatusCode, access.Message!);
 
-        var parsed = await ParseMaterialAsync(request, material.CourseId);
+        var parsed = await ParseMaterialAsync(request, material.CourseId, material.Url);
         if (!parsed.Succeeded)
             return ServiceResult<MaterialResponse>.Fail(parsed.StatusCode, parsed.Message!);
 
@@ -438,7 +444,7 @@ public class CourseService : ICourseService
         if (!access.Succeeded)
             return access;
 
-        DeleteStored(material.Url);
+        DeleteStored(material.Url, material.CourseId);
         _db.CourseMaterials.Remove(material);
         await TouchCourseAsync(material.CourseId);
         await _db.SaveChangesAsync();
@@ -456,7 +462,7 @@ public class CourseService : ICourseService
         if (!CanRead(actor, material.Course))
             return ServiceResult<StoredFileResponse>.Fail(StatusCodes.Status404NotFound, "Material not found");
 
-        return OpenStored(material.Url, material.Title, inline: false);
+        return OpenStored(material.Url, material.CourseId, material.Title, inline: false);
     }
 
     public async Task<ServiceResult<LessonResponse>> UploadLessonVideoAsync(Actor actor, int lessonId, LessonVideoUploadRequest request)
@@ -480,7 +486,7 @@ public class CourseService : ICourseService
             return ServiceResult<LessonResponse>.Fail(StatusCodes.Status400BadRequest, "Lesson video must be mp4, webm or mov");
         }
 
-        DeleteStored(lesson.VideoUrl);
+        DeleteStored(lesson.VideoUrl, lesson.Chapter.CourseId);
         lesson.VideoUrl = StoredMedia.Encode(saved.Value!);
         if (request.DurationSeconds is >= 0)
             lesson.DurationSeconds = request.DurationSeconds;
@@ -502,7 +508,7 @@ public class CourseService : ICourseService
         if (!CanRead(actor, lesson.Chapter.Course))
             return ServiceResult<StoredFileResponse>.Fail(StatusCodes.Status404NotFound, "Lesson not found");
 
-        return OpenStored(lesson.VideoUrl, lesson.Title, inline: true);
+        return OpenStored(lesson.VideoUrl, lesson.Chapter.CourseId, lesson.Title, inline: true);
     }
 
     public async Task<ServiceResult> AssignLecturerAsync(Actor actor, int courseId, int userId)
@@ -559,11 +565,15 @@ public class CourseService : ICourseService
 
         _ = existingId;
 
+        var thumbnailUrl = string.IsNullOrWhiteSpace(request.ThumbnailUrl) ? null : request.ThumbnailUrl.Trim();
+        if (thumbnailUrl != null && !StoredMedia.IsHttpUrl(thumbnailUrl))
+            return ServiceResult<Course>.Fail(StatusCodes.Status400BadRequest, "Thumbnail url must be an http or https address");
+
         return ServiceResult<Course>.Ok(new Course
         {
             Title = title,
             Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
-            ThumbnailUrl = string.IsNullOrWhiteSpace(request.ThumbnailUrl) ? null : request.ThumbnailUrl.Trim(),
+            ThumbnailUrl = thumbnailUrl,
             Level = level,
             CategoryId = request.CategoryId
         });
@@ -587,7 +597,8 @@ public class CourseService : ICourseService
         });
     }
 
-    private async Task<ServiceResult<CourseMaterial>> ParseMaterialAsync(MaterialRequest request, int courseId)
+    private async Task<ServiceResult<CourseMaterial>> ParseMaterialAsync(
+        MaterialRequest request, int courseId, string? currentUrl = null)
     {
         var title = request.Title?.Trim();
         var url = request.Url?.Trim();
@@ -595,6 +606,10 @@ public class CourseService : ICourseService
             return ServiceResult<CourseMaterial>.Fail(StatusCodes.Status400BadRequest, "Material title is required");
         if (string.IsNullOrWhiteSpace(url))
             return ServiceResult<CourseMaterial>.Fail(StatusCodes.Status400BadRequest, "Material url is required");
+
+        // Stored-file urls are only produced by the upload endpoint; clients may resend the current one.
+        if (url != currentUrl && !StoredMedia.IsHttpUrl(url))
+            return ServiceResult<CourseMaterial>.Fail(StatusCodes.Status400BadRequest, "Material url must be an http or https address");
 
         var type = string.IsNullOrWhiteSpace(request.Type) ? MaterialTypes.Link : request.Type.Trim();
         if (!MaterialTypes.IsValid(type))
@@ -737,9 +752,9 @@ public class CourseService : ICourseService
         return ServiceResult<string>.Ok(key);
     }
 
-    private ServiceResult<StoredFileResponse> OpenStored(string? storedUrl, string title, bool inline)
+    private ServiceResult<StoredFileResponse> OpenStored(string? storedUrl, int courseId, string title, bool inline)
     {
-        var key = StoredMedia.Decode(storedUrl);
+        var key = StoredMedia.DecodeForCourse(storedUrl, courseId);
         if (key == null)
             return ServiceResult<StoredFileResponse>.Fail(StatusCodes.Status404NotFound, "Uploaded file not found");
 
@@ -759,12 +774,20 @@ public class CourseService : ICourseService
         }
     }
 
-    private void DeleteStored(string? value)
+    private void DeleteStored(string? value, int courseId)
     {
-        var key = StoredMedia.Decode(value);
+        var key = StoredMedia.DecodeForCourse(value, courseId);
         if (key != null)
             _files.Delete(key);
     }
+
+    private const string InvalidVideoUrlMessage = "Video url must be an http or https address";
+
+    // Ignored values (keeping the current upload) are fine; anything that would be stored must be http(s).
+    private static bool IsAcceptableVideoUrl(string? current, string? incoming) =>
+        string.IsNullOrWhiteSpace(incoming) ||
+        !ShouldReplaceVideo(current, incoming) ||
+        StoredMedia.IsHttpUrl(incoming);
 
     private static bool ShouldReplaceVideo(string? current, string? incoming)
     {

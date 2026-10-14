@@ -24,6 +24,15 @@ public class UsersLookupController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> Lookup([FromQuery] string? role, [FromQuery] string? search)
     {
+        // Lecturers only need students (to enroll them); other roles stay admin-only.
+        if (!User.IsInRole("Admin"))
+        {
+            if (!string.IsNullOrWhiteSpace(role) && role.Trim() != "Student")
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "You can only look up students" });
+
+            role = "Student";
+        }
+
         var query =
             from u in _db.Users.AsNoTracking()
             join ur in _db.UserRoles on u.Id equals ur.UserId

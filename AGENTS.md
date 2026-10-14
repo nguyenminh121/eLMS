@@ -80,6 +80,7 @@ Agent sandbox notes:
 - Put a `// VERB: /api/...` comment above each action, matching existing controllers.
 - Authorization via attributes: `[Authorize]` for any signed-in user, `[Authorize(Roles = "Admin")]`
   for role gates. Role names are plain strings — keep them identical everywhere (see section 6).
+  A fallback policy requires authentication everywhere; public endpoints need `[AllowAnonymous]`.
 - Current user id: `User.FindFirstValue(ClaimTypes.NameIdentifier)`; reload the user via
   `UserManager` and reject `!user.IsActive` where it matters.
 - Controllers currently talk to `UserManager<ApplicationUser>` / `ApplicationDbContext` directly.
@@ -98,7 +99,8 @@ Agent sandbox notes:
   Identity failures map `IdentityError.Code/Description` into `errors`. Model-binding failures use
   the same shape via `InvalidModelStateResponseFactory` in `Program.cs`.
 - Status codes: 400 validation, 401 unauthenticated / bad credentials, 403 wrong role,
-  404 not found, 409 conflict (e.g. duplicate email), 500 only for unexpected server failures.
+  404 not found, 409 conflict (e.g. duplicate email), 429 lockout / rate limit,
+  500 only for unexpected server failures.
 - Keep API messages in English; the frontend translates them (`ViewApp/src/api/errors.ts`).
   When you add a new message or Identity error code, add its Vietnamese translation there.
 
@@ -108,8 +110,15 @@ Agent sandbox notes:
 
 **Auth/JWT**
 - HS256, `Jwt:Key` must be ≥ 32 bytes (startup throws otherwise). Claims: NameIdentifier, Email,
-  Name, Role(s). `Jwt:ExpireMinutes` default 60, `ClockSkew = Zero`, no refresh tokens.
+  Name, Role(s), `security_stamp`. `Jwt:ExpireMinutes` default 60, `ClockSkew = Zero`, no refresh tokens.
+- `Services/JwtSessionValidator` (`OnTokenValidated`) rejects tokens of inactive users or with a stale
+  security stamp and replaces role claims with the current DB roles. Anything that must log a user
+  out everywhere should call `UserManager.UpdateSecurityStampAsync`.
 - Login rejects inactive users with the same 401 as bad credentials (no account enumeration).
+  5 wrong passwords lock the account for 15 minutes (429). `register`/`login` use the `auth`
+  rate-limit policy (per IP, `RateLimiting:AuthPermitLimit`); behind proxies set `ReverseProxy:ForwardLimit`.
+- Stored files (`local:<courseId>/<file>`) are created only by upload endpoints; JSON endpoints accept
+  only `http(s)` URLs, and files are served/deleted only through their own course.
 
 ## 5. Database
 

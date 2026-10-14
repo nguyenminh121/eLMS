@@ -62,10 +62,20 @@ flowchart LR
 Luồng xác thực:
 
 1. SPA gọi `POST /api/account/login` → API kiểm tra mật khẩu bằng Identity, phát hành JWT (HS256) chứa
-   `NameIdentifier`, `Email`, `Name` và các claim `Role`.
+   `NameIdentifier`, `Email`, `Name`, các claim `Role` và `security_stamp`.
 2. SPA lưu token vào `localStorage` và gắn header `Authorization: Bearer <token>` cho mọi request.
-3. API xác thực token (issuer, audience, chữ ký, thời hạn — không có clock skew) và kiểm tra vai trò qua `[Authorize]`.
+3. API xác thực token (issuer, audience, chữ ký, thời hạn — không có clock skew), rồi đối chiếu với database:
+   user phải còn `IsActive` và `security_stamp` phải khớp (đặt lại mật khẩu sẽ làm mọi token cũ hết hiệu lực).
+   Vai trò luôn lấy từ database, nên cấp/thu hồi vai trò có hiệu lực ngay mà không cần đăng nhập lại.
 4. Khi API trả về `401`, SPA xóa token và chuyển người dùng về trang đăng nhập.
+
+Bảo vệ khác:
+
+- Mọi endpoint mặc định yêu cầu đăng nhập (fallback policy); chỉ `register`, `login`, `health` công khai.
+- Đăng nhập sai 5 lần liên tiếp → tài khoản bị khóa 15 phút (`429`). `register`/`login` giới hạn
+  100 request/phút/IP (`RateLimiting__AuthPermitLimit`), vượt quá trả `429` kèm `Retry-After`.
+- URL do người dùng nhập (`url` học liệu, `videoUrl`, `thumbnailUrl`) chỉ nhận `http://`/`https://`.
+  File upload chỉ được đọc/xóa qua đúng khóa học chứa nó.
 
 Quy ước API:
 
@@ -177,6 +187,8 @@ Mở http://localhost:5173. Vite proxy chuyển mọi request `/api/*` tới `ht
 | `Jwt__ExpireMinutes`                    | `60`                         | Thời hạn access token (không có refresh token)                                  |
 | `Seed__AdminEmail` / `Seed__AdminPassword` | trong `.env`              | Bắt buộc khi `ASPNETCORE_ENVIRONMENT=Production`. Local để trống thì dùng `admin@basiclms.local` / `Admin@123456` |
 | `Storage__Root`                         | `uploads`                    | Thư mục file upload; Docker dùng `/app/uploads` (volume `api_uploads`)          |
+| `RateLimiting__AuthPermitLimit`         | `100`                        | Số request `register`/`login` tối đa mỗi phút cho mỗi IP                       |
+| `ReverseProxy__ForwardLimit`            | `0`                          | Số reverse proxy tin cậy để lấy IP client từ `X-Forwarded-For`; Docker đặt `2`  |
 
 Biến chỉ dùng cho Docker production (`MSSQL_HOST`, `MSSQL_DATABASE`, `MSSQL_SA_PASSWORD`, `MSSQL_APP_PASSWORD`, `MSSQL_PID`): xem [`deploy/README.md`](deploy/README.md#cấu-hình-env).
 
@@ -213,13 +225,13 @@ Sau đó tạo Proxy Host trong NPM (`http://<ip-server>:81`) trỏ tới `web:8
 | Method | Endpoint                                 | Quyền         | Mô tả                                                          |
 | ------ | ---------------------------------------- | ------------- | -------------------------------------------------------------- |
 | GET    | `/api/health`                            | Public        | Health check (text `Healthy` / `Unhealthy`, kiểm tra kết nối DB) |
-| POST   | `/api/account/register`                  | Public        | Đăng ký `{ fullName, email, password }`, gán vai trò Student   |
-| POST   | `/api/account/login`                     | Public        | Đăng nhập `{ email, password }` → `{ token, userId, fullName, email, roles }` |
+| POST   | `/api/account/register`                  | Public        | Đăng ký `{ fullName, email, password }`, gán vai trò Student. Rate limit theo IP (`429`) |
+| POST   | `/api/account/login`                     | Public        | Đăng nhập `{ email, password }` → `{ token, userId, fullName, email, roles }`. `429` khi bị khóa (5 lần sai) hoặc vượt rate limit |
 | GET    | `/api/account/me`                        | Đã đăng nhập  | Thông tin người dùng hiện tại `{ id, email, fullName, roles }` |
 | GET    | `/api/dashboard/welcome`                 | Đã đăng nhập  | Lời chào theo vai trò + `serverTimeUtc`                        |
 | GET    | `/api/admin/users?search=`               | Admin         | Danh sách người dùng (tối đa 100), tìm theo email/họ tên       |
 | POST   | `/api/admin/users/{id}/reset-password`   | Admin         | Đặt lại mật khẩu `{ newPassword }`                             |
-| GET    | `/api/users?role=&search=`               | Admin, Lecturer | Tra cứu user theo vai trò (ghi danh / phân công)             |
+| GET    | `/api/users?role=&search=`               | Admin, Lecturer | Tra cứu user theo vai trò (ghi danh / phân công). Lecturer chỉ tra được `Student` (role khác → `403`) |
 | GET    | `/api/categories`                        | Đã đăng nhập  | Danh sách danh mục khóa học (`courseCount`)                    |
 | POST/PUT/DELETE | `/api/categories`, `/api/categories/{id}` | Admin | CRUD danh mục                                         |
 | GET    | `/api/courses`                           | Đã đăng nhập  | Student chỉ thấy `Published`; Lecturer thấy Published + khóa được assign |
@@ -234,7 +246,7 @@ Sau đó tạo Proxy Host trong NPM (`http://<ip-server>:81`) trỏ tới `web:8
 | PUT/DELETE | `/api/lessons/{id}`                  | Admin / Lecturer assign |                                              |
 | POST   | `/api/lessons/{id}/video`                | Admin / Lecturer assign | `multipart/form-data` file (mp4/webm/mov, ≤25MB) |
 | GET    | `/api/lessons/{id}/video`                | Đã đăng nhập + đọc được khóa | Stream video đã tải lên                    |
-| POST   | `/api/courses/{courseId}/materials`      | Admin / Lecturer assign | `{ title, url, type, lessonId? }`                    |
+| POST   | `/api/courses/{courseId}/materials`      | Admin / Lecturer assign | `{ title, url, type, lessonId? }` — `url` phải là `http(s)://` |
 | POST   | `/api/courses/{courseId}/materials/upload` | Admin / Lecturer assign | `multipart/form-data` title + file (≤25MB)     |
 | GET    | `/api/materials/{id}/file`               | Đã đăng nhập + đọc được khóa | Tải file học liệu                          |
 | PUT/DELETE | `/api/materials/{id}`                | Admin / Lecturer assign |                                              |
@@ -259,7 +271,7 @@ Chính sách mật khẩu (Identity): tối thiểu 6 ký tự, có chữ hoa, c
 | Lecturer | Xem khóa Published + khóa được assign; sửa nội dung khóa/lớp mình phụ trách; tạo lớp trên khóa được assign; ghi danh hộ vào lớp mình dạy | Tạo/xóa danh mục; tạo khóa; phân công giảng viên; xem nháp khóa/lớp không thuộc mình |
 | Student  | Xem khóa Published, lớp Open (hoặc lớp đã enroll); tự ghi danh / hủy ghi danh | Mọi thao tác quản trị, tạo/sửa khóa-lớp-danh mục, xem danh sách enroll của người khác |
 
-Tài khoản Lecturer hiện được gán vai trò thủ công (chưa có API quản lý vai trò).
+Tài khoản Lecturer hiện được gán vai trò thủ công (chưa có API quản lý vai trò); thay đổi có hiệu lực ngay ở request kế tiếp.
 
 ## Cơ sở dữ liệu
 
@@ -295,7 +307,7 @@ Không tạo bảng `Users`/`Roles` custom. Mọi user FK trỏ `AspNetUsers`. N
 dotnet test BasicLMS.slnx
 ```
 
-- 87 integration test trong `tests/BasicLMS.Tests/`, chia theo feature (`Account/`, `Admin/`, `Dashboard/`, `Health/`, `Lms/`).
+- 110 integration test trong `tests/BasicLMS.Tests/`, chia theo feature (`Account/`, `Admin/`, `Dashboard/`, `Health/`, `Lms/`).
 - `CustomWebApplicationFactory` khởi tạo API thật với SQLite in-memory và JWT key riêng, nên **không cần SQL Server** khi chạy test.
 - Frontend chưa có unit test; kiểm tra bằng `npm run lint` và `npm run build` trong `ViewApp/`.
 
@@ -319,5 +331,7 @@ dotnet test BasicLMS.slnx
 | `Login failed for user 'lms_app'` / `Cannot open database`       | Chưa chạy `database/BasicLMS.sql` với `-v AppPassword=...`                                        |
 | `Invalid object name 'AspNetRoles'` khi khởi động                | Database chưa có schema — chạy `dotnet ef database update --connection "<sa connection>"`         |
 | Frontend báo "Không thể kết nối tới máy chủ"                      | API chưa chạy hoặc không ở cổng `5139` (kiểm tra `ViewApp/vite.config.ts`)                       |
+| Đăng nhập báo "nhập sai quá nhiều lần" (`429`)                   | Tài khoản bị khóa 15 phút sau 5 lần sai; chờ hết hạn (Admin đặt lại mật khẩu không gỡ khóa)      |
+| Mọi người bị đăng xuất sau khi cập nhật phiên bản                | Token phát hành trước bản có `security_stamp` không còn hợp lệ — đăng nhập lại một lần            |
 | Lỗi CORS khi gọi API trực tiếp từ origin khác                    | Thêm origin vào policy `Frontend` trong `Program.cs`, hoặc gọi qua Vite proxy                    |
 | Container SQL Server không chạy trên Apple Silicon               | Image chạy qua emulation `linux/amd64`; bật Rosetta trong Docker Desktop                          |

@@ -1,14 +1,19 @@
+using BasicLMS.Controllers;
 using BasicLMS.Data;
 using BasicLMS.Models;
 using BasicLMS.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using System.Text;
+using System.Threading.RateLimiting;
 
 LoadDotEnv();
 
@@ -54,6 +59,10 @@ builder.Services
         options.Password.RequireLowercase = true;
         options.Password.RequireNonAlphanumeric = true;
 
+        options.Lockout.AllowedForNewUsers = true;
+        options.Lockout.MaxFailedAccessAttempts = 5;
+        options.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
+
         options.User.RequireUniqueEmail = true;
     })
     .AddEntityFrameworkStores<ApplicationDbContext>()
@@ -95,7 +104,64 @@ builder.Services
 
             ClockSkew = TimeSpan.Zero
         };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = JwtSessionValidator.ValidateAsync
+        };
     });
+
+// Endpoints are private unless marked [AllowAnonymous].
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
+
+// Per client IP. Generous on purpose: a whole classroom often shares one NAT address;
+// per-account lockout is what stops password guessing.
+var authPermitLimit = builder.Configuration.GetValue("RateLimiting:AuthPermitLimit", 100);
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
+        }
+
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { message = "Too many requests. Please try again later." },
+            cancellationToken);
+    };
+
+    options.AddPolicy(AccountController.AuthRateLimitPolicy, httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = authPermitLimit,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+});
+
+// Number of trusted reverse proxies in front of the API (0 = none, e.g. local dotnet run).
+// The Docker stack has two (Nginx Proxy Manager -> web nginx), so client IPs survive for rate limiting.
+var forwardLimit = builder.Configuration.GetValue("ReverseProxy:ForwardLimit", 0);
+if (forwardLimit > 0)
+{
+    builder.Services.Configure<ForwardedHeadersOptions>(options =>
+    {
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = forwardLimit;
+        options.KnownIPNetworks.Clear();
+        options.KnownProxies.Clear();
+    });
+}
 
 // Swagger
 builder.Services.AddEndpointsApiExplorer();
@@ -159,6 +225,11 @@ using (var scope = app.Services.CreateScope())
     );
 }
 
+if (forwardLimit > 0)
+{
+    app.UseForwardedHeaders();
+}
+
 // Swagger and the dev HTTPS port only exist in Development.
 // Production runs HTTP behind Nginx Proxy Manager, which terminates TLS.
 if (app.Environment.IsDevelopment())
@@ -170,11 +241,13 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("Frontend");
 
+app.UseRateLimiter();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHealthChecks("/api/health");
+app.MapHealthChecks("/api/health").AllowAnonymous();
 
 app.Run();
 

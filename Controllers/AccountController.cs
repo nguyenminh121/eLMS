@@ -1,8 +1,10 @@
 using BasicLMS.DTOs.Auth;
 using BasicLMS.Models;
+using BasicLMS.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using System.ComponentModel.DataAnnotations;
 using System.IdentityModel.Tokens.Jwt;
@@ -15,6 +17,8 @@ namespace BasicLMS.Controllers;
 [Route("api/account")]
 public class AccountController : ControllerBase
 {
+    public const string AuthRateLimitPolicy = "auth";
+
     private readonly UserManager<ApplicationUser> _users;
     private readonly IConfiguration _config;
 
@@ -27,6 +31,8 @@ public class AccountController : ControllerBase
     }
 
     // POST: /api/account/register
+    [AllowAnonymous]
+    [EnableRateLimiting(AuthRateLimitPolicy)]
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest request)
     {
@@ -126,6 +132,8 @@ public class AccountController : ControllerBase
     }
 
     // POST: /api/account/login
+    [AllowAnonymous]
+    [EnableRateLimiting(AuthRateLimitPolicy)]
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest request)
     {
@@ -159,15 +167,22 @@ public class AccountController : ControllerBase
 
         var user = await _users.FindByEmailAsync(email);
 
-        if (user == null ||
-            !user.IsActive ||
-            !await _users.CheckPasswordAsync(user, password))
+        if (user == null || !user.IsActive)
+            return InvalidCredentials();
+
+        if (await _users.IsLockedOutAsync(user))
+            return LockedOut();
+
+        if (!await _users.CheckPasswordAsync(user, password))
         {
-            return Unauthorized(new
-            {
-                message = "Invalid email or password"
-            });
+            await _users.AccessFailedAsync(user);
+            return await _users.IsLockedOutAsync(user) ? LockedOut() : InvalidCredentials();
         }
+
+        await _users.ResetAccessFailedCountAsync(user);
+
+        if (string.IsNullOrEmpty(user.SecurityStamp))
+            await _users.UpdateSecurityStampAsync(user);
 
         var roles = await _users.GetRolesAsync(user);
 
@@ -175,7 +190,8 @@ public class AccountController : ControllerBase
         {
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Email, user.Email!),
-            new(ClaimTypes.Name, user.UserName!)
+            new(ClaimTypes.Name, user.UserName!),
+            new(JwtSessionValidator.SecurityStampClaim, user.SecurityStamp!)
         };
 
         claims.AddRange(
@@ -253,4 +269,13 @@ public class AccountController : ControllerBase
             roles
         });
     }
+
+    private UnauthorizedObjectResult InvalidCredentials() =>
+        Unauthorized(new { message = "Invalid email or password" });
+
+    private ObjectResult LockedOut() =>
+        StatusCode(StatusCodes.Status429TooManyRequests, new
+        {
+            message = "Too many failed login attempts. Try again later."
+        });
 }
