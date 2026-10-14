@@ -84,10 +84,12 @@ openssl rand -base64 24 | tr -d "/+=" | sed 's/$/aA1!/'   # mật khẩu SQL / a
 | `Seed__AdminPassword` | Có | — | API từ chối khởi động ở Production nếu trống. Phải đạt policy: ≥ 6 ký tự, có chữ hoa, chữ thường, số, ký tự đặc biệt |
 | `RateLimiting__AuthPermitLimit` | Không | `100` | Số request `register`/`login` mỗi phút cho mỗi IP client. Cả lớp dùng chung Wi‑Fi = chung một IP public, nên đừng đặt quá thấp; brute-force từng tài khoản đã bị chặn bởi khóa 15 phút sau 5 lần sai |
 
-Compose đặt sẵn `ReverseProxy__ForwardLimit=2` để API lấy đúng IP client qua chuỗi
+Compose đặt mặc định `ReverseProxy__ForwardLimit=2` để API lấy đúng IP client qua chuỗi
 Nginx Proxy Manager → `web` (cần cho rate limit). Nếu bỏ NPM hoặc thêm một tầng proxy (ví dụ
-Cloudflare), sửa giá trị này bằng đúng số proxy đứng trước API; đặt lớn hơn thực tế sẽ cho phép
-client giả mạo IP qua header `X-Forwarded-For`.
+Cloudflare ở chế độ proxy — đám mây cam), đặt biến này trong `.env` bằng đúng số proxy đứng trước
+API (Cloudflare → NPM → `web` = `3`); đặt lớn hơn thực tế sẽ cho phép client giả mạo IP qua header
+`X-Forwarded-For`. Khi dùng `3`, nên chỉ cho IP của Cloudflare truy cập cổng `80`/`443` của server
+(firewall hoặc Access List trong NPM), nếu không ai biết IP gốc có thể gọi thẳng và giả mạo IP.
 
 `ConnectionStrings__DefaultConnection` và `Storage__Root` trong `.env` chỉ dùng cho `dotnet run`
 local; compose tự dựng chuỗi kết nối từ các biến `MSSQL_*` và lưu file upload ở `/app/uploads`

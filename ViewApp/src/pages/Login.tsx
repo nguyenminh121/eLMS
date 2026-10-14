@@ -58,12 +58,6 @@ export default function Login() {
         }
     };
 
-    const fillDemo = (demoEmail: string, demoPass: string) => {
-        setEmail(demoEmail);
-        setPassword(demoPass);
-        setFieldErrors({});
-    };
-
     return (
         <AuthLayout
             title="Đăng nhập tài khoản"
@@ -111,20 +105,6 @@ export default function Login() {
                 <Button type="submit" loading={submitting} className="w-full shadow-md shadow-indigo-200">
                     {submitting ? "Đang xác thực..." : "Đăng nhập vào hệ thống"}
                 </Button>
-
-                {/* Demo Helper Box */}
-                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3 text-xs text-slate-500">
-                    <p className="font-semibold text-slate-700 mb-1.5">Tài khoản mặc định hệ thống:</p>
-                    <div className="flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            onClick={() => fillDemo("admin@basiclms.local", "Admin@123456")}
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 transition"
-                        >
-                            Quản trị viên (Admin)
-                        </button>
-                    </div>
-                </div>
 
                 <p className="text-center text-xs text-slate-400">
                     Quên mật khẩu? Vui lòng liên hệ quản trị viên để được cấp lại.

@@ -39,7 +39,8 @@ services:
       Seed__AdminPassword: ${Seed__AdminPassword:?Seed__AdminPassword is required}
       Storage__Root: /app/uploads
       # Nginx Proxy Manager -> web nginx -> api: trust two X-Forwarded-For hops for client IPs.
-      ReverseProxy__ForwardLimit: "2"
+      # Behind a CDN such as Cloudflare in proxy mode, set 3 in .env.
+      ReverseProxy__ForwardLimit: ${ReverseProxy__ForwardLimit:-2}
       RateLimiting__AuthPermitLimit: ${RateLimiting__AuthPermitLimit:-100}
     volumes:
       - api_uploads:/app/uploads
